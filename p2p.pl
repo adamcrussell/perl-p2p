@@ -14,6 +14,7 @@ package PeerNode{
 	use boolean;
 	use Class::Struct;
 
+    use constant MAX_SUMMAND => 9;
 	use constant ADMIN_PORT => 9999;
 	use constant PEER_CONNECTION_PORT => 7890;
 	use constant DEFAULT_HOST => q/localhost/;
@@ -174,60 +175,62 @@ package PeerNode{
         for my $peer (@{$self->peers()}){ 
             my $peer_socket = create_peer_connection($peer);
             $peer_connections{$peer} = $peer_socket;
-            vec($ready, fileno($peer_socket), 1) = 1;
         }
 		my %connections;
 		my @admin_connections;
 		my @peer_listener_connections;
 		while(true){
-			my $message = "";
-			select($ready, undef, undef, undef);
 			##
-		    # 1. Check which connections are ready.
-		    ##
+		    # 1. Send commands to all our peers.
+		    ##	
 			for my $peer (keys %peer_connections){
 			    my $peer_connection_socket = $peer_connections{$peer};
-			    if(vec($ready, fileno($peer_connection_socket), 1)){
-				    accept(my $peer_connection_socket_read, $peer_connection_socket);
-				    $connections{$peer} = $peer_connection_socket_read;
-			    }
+				my $message = "ADD " . (1 + int(rand(MAX_SUMMAND))) . " " . (1 + int(rand(MAX_SUMMAND)));
+				print "$message = ";
+				syswrite $peer_connection_socket, "$message\n";
+				$message = read_socket($peer_connection_socket);
+				print "$message\n";	
 			}
+			##
+		    # 2. Check which server connections are ready.
+		    ##
+		    select($ready, undef, undef, 1e-1);
 			if(vec($ready, fileno($admin_socket), 1)){
 				accept(my $admin_socket_read, $admin_socket);
-				push @admin_connections, $admin_socket_read;
+				$admin_connections[fileno($admin_socket_read)] = $admin_socket_read;
 			}			
 			if(vec($ready, fileno($peer_listener_socket), 1)){
 				accept(my $peer_listener_socket_read, $peer_listener_socket);
 				$peer_listener_connections[fileno($peer_listener_socket_read)] = $peer_listener_socket_read;
 			}
 			##
-			# 2. For all the ready connections receive/respond to messages.
+			# 2. For all the ready server connections receive/respond to messages.
 			##
 			for my $connection (@peer_listener_connections){
-				if($connection && vec($ready, fileno($connection), 1)){
+			    if($connection){
 					my $message;
 					$message = read_socket($connection);
-					syswrite $connection, "Thanks for the message: $message\n" if $message;
-				}
-			}
-			for my $connection (values %connections){
-				if($connection && vec($ready, fileno($connection), 1)){
-					my $message;
-					$message = read_socket($connection);
-					syswrite $connection, "Thanks for the message: $message\n";
+					if($message =~ m/ADD\s([1-9])\s([1-9])/){
+						syswrite $connection, $1 + $2 . "\n";
+					}
+					else{
+						syswrite $connection, "malformed message: $message\n";
+					}
 				}
 			}
 			for my $connection (@admin_connections){
-			    my($new_peer, $deleted_peer) = $self->read_admin_socket($connection);
-			    if($new_peer){
-                    $peer_connections{$new_peer} = create_peer_connection($new_peer);
-                    $self->peers([@{$self->peers()}, $new_peer]);
-                }
-			    elsif($deleted_peer){
-			        close($peer_connections{$deleted_peer}) if $peer_connections{$deleted_peer};
-			        delete($peer_connections{$deleted_peer}) if $peer_connections{$deleted_peer};
-			        $self->peers([grep {$deleted_peer ne $_ } @{$self->peers()}]);
-			    }                
+			    if($connection){
+					my($new_peer, $deleted_peer) = $self->read_admin_socket($connection);
+					if($new_peer){
+						$peer_connections{$new_peer} = create_peer_connection($new_peer);
+						$self->peers([@{$self->peers()}, $new_peer]);
+					}
+					elsif($deleted_peer){
+						close($peer_connections{$deleted_peer}) if $peer_connections{$deleted_peer};
+						delete($peer_connections{$deleted_peer}) if $peer_connections{$deleted_peer};
+						$self->peers([grep {$deleted_peer ne $_ } @{$self->peers()}]);
+					}   
+				}
 			}
 			##
 			# 3. Reset bit vectors.
@@ -236,13 +239,6 @@ package PeerNode{
 			vec($ready, fileno($peer_listener_socket), 1) = 1; 
 			for my $peer_listener_connection (@peer_listener_connections){
                 vec($ready, fileno($peer_listener_connection), 1) = 1 if $peer_listener_connection;
-            }
-            for my $peer_connection_socket (values %peer_connections){
-                vec($ready, fileno($peer_connection_socket), 1) = 1 if $peer_connection_socket;
-            }
-            for my $peer (keys %connections){
-			    my $connection = $connections{$peer};
-                vec($ready, fileno($connection), 1) = 1 if $connection;
             }
             @admin_connections = ();
 		}
