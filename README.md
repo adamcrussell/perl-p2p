@@ -7,10 +7,12 @@ strips away everything except the fundamental necessities of peer to peer networ
  
 ### Key concepts 
 Also see [this blog post](http://www.rabbitfarm.com/cgi-bin/blosxom/perl/2022/09/17) for a more detailed overview of the key concepts and in depth review of the code.
-* HTTP interface to list/add/delete peer nodes
+* HTTP interface to list/add/delete peer nodes. We effectively implement a minimal web server in the `read_admin_socket()` method.
 * Low level Socket primitives are used to provide a familiar set of API calls for those looking to implement these concepts in C and C++. Almost all languages will hace similar networking functions available. In this way, Perl is acting as a rapid prototyping language, a function at which it excels.
 * Nodes send each only one kind of message. This one message type is for adding two numbers.
-* There is some error handling but to maintain simplicity more advanced error handling is not implemented. For example, this code would be more robust if PIPE signals were handled if an attempt was made to write to a closed socket. 
+* There is some error handling but to maintain simplicity more advanced error handling is not implemented. 
+For example, this code catches PIPE signals if an attempt was made to write to a closed socket. However, for example, if the initial
+attempt to open a connection to a peer fails the program will exit.
 
 ### Quick start
 (Set up two connected nodes on the same system. Use two terminal windows.)

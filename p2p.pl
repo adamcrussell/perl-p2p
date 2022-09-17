@@ -12,6 +12,8 @@ package PeerNode{
 	
 	use Socket;	
 	use boolean;
+	use sigtrap qw/handler signal_handler PIPE/;
+
 	use Class::Struct;
 
     use constant MAX_SUMMAND => 9;
@@ -31,6 +33,10 @@ package PeerNode{
 	    peer_port => q/$/,  
 	    peers => q/@/
 	);
+	
+	sub signal_handler{
+        "Caught a signal $!";
+    }
 
 	sub create_admin_listener{
 		my($host, $port) = @_;
@@ -188,6 +194,10 @@ package PeerNode{
 				my $message = "ADD " . (1 + int(rand(MAX_SUMMAND))) . " " . (1 + int(rand(MAX_SUMMAND)));
 				print "$message = ";
 				syswrite $peer_connection_socket, "$message\n";
+				if($!){
+				    delete($peer_connections{$peer});
+				    $self->peers([grep {$peer ne $_ } @{$self->peers()}]);
+				}
 				$message = read_socket($peer_connection_socket);
 				print "$message\n";	
 			}
