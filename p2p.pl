@@ -35,7 +35,7 @@ package PeerNode{
 	);
 	
 	sub signal_handler{
-        "Caught a signal $!";
+        print "ERROR: $!";
     }
 
 	sub create_admin_listener{
@@ -89,13 +89,13 @@ package PeerNode{
 	}
 	
 	sub parse_form{
-        my $data = $_[0];
+        my($data) = @_;
         my %data;
-        foreach(split /&/, $data) {
-            my ($key, $val) = split /=/;
-            $val =~ s/\+/ /g;
-            $val =~ s/%(..)/chr(hex($1))/eg;
-            $data{$key} = $val;
+        for my $key_value (split(/&/, $data)){
+            my($key, $value) = split(/=/, $key_value);
+            $value =~ s/\+/ /g;
+            $value =~ s/%(..)/chr(hex($1))/eg;
+            $data{$key} = $value;
         }
         return %data;
     }
@@ -106,7 +106,6 @@ package PeerNode{
         my $response; 
         my $new_peer;
         my $deleted_peer;
-        local $| = true;
         local $/ = Socket::CRLF;
         while(<$socket_read>) {
             chomp; 
@@ -145,7 +144,7 @@ package PeerNode{
         if($request{METHOD} eq q/GET/ && $request{URL} eq q#/peers#){
             $response .= join(Socket::CRLF, @{$self->peers()});
         }
-        if($request{METHOD} eq q/POST/ && $request{URL} eq q#/addPeer#){
+        elsif($request{METHOD} eq q/POST/ && $request{URL} eq q#/addPeer#){
             $new_peer = $request{DATA}{peer};
             if(0 == grep { $new_peer eq $_} @{$self->peers()}){
                 $response .= q/new peer / . $new_peer . q/ received/; 
@@ -155,7 +154,7 @@ package PeerNode{
                 $new_peer = undef;
             }            
         }
-        if($request{METHOD} eq q/POST/ && $request{URL} eq q#/deletePeer#){
+        elsif($request{METHOD} eq q/POST/ && $request{URL} eq q#/deletePeer#){
             $deleted_peer = $request{DATA}{peer};
             if(0 == grep { $deleted_peer eq $_ } @{$self->peers()}){
                 $response .= q/peer requested to be deleted (/ . $deleted_peer . q/) not found/; 
@@ -170,7 +169,7 @@ package PeerNode{
         return ($new_peer, $deleted_peer);
 	}
 	
-	sub run{
+sub run{
 	    my $self = shift; 
 	    my $admin_socket = create_admin_listener($self->host(), $self->admin_port());
         my $peer_listener_socket = create_peer_listener($self->host(), $self->peer_port());
@@ -195,6 +194,7 @@ package PeerNode{
 				print "$message = ";
 				syswrite $peer_connection_socket, "$message\n";
 				if($!){
+				    close($peer_connections{$peer});
 				    delete($peer_connections{$peer});
 				    $self->peers([grep {$peer ne $_ } @{$self->peers()}]);
 				}
@@ -216,17 +216,31 @@ package PeerNode{
 			##
 			# 2. For all the ready server connections receive/respond to messages.
 			##
+			my @invalid_connections;
 			for my $connection (@peer_listener_connections){
 			    if($connection){
 					my $message;
 					$message = read_socket($connection);
-					if($message =~ m/ADD\s([1-9])\s([1-9])/){
-						syswrite $connection, $1 + $2 . "\n";
+					if(length($message) != 0){
+						if($message =~ m/ADD\s([1-9])\s([1-9])/){
+							syswrite $connection, $1 + $2 . "\n";
+						}
+						else{
+							syswrite $connection, "malformed message: $message\n";
+						}
 					}
 					else{
-						syswrite $connection, "malformed message: $message\n";
+					    push @invalid_connections, $connection;
+					    close($connection);
 					}
 				}
+			}
+			if(@invalid_connections){
+				my @updated_peer_connections;
+				for my $connection (@invalid_connections){
+					push @updated_peer_connections, grep { defined($_) && $connection != $_ } @peer_listener_connections;
+				}
+				@peer_listener_connections = @updated_peer_connections;
 			}
 			for my $connection (@admin_connections){
 			    if($connection){
@@ -236,7 +250,7 @@ package PeerNode{
 						$self->peers([@{$self->peers()}, $new_peer]);
 					}
 					elsif($deleted_peer){
-						close($peer_connections{$deleted_peer}) if $peer_connections{$deleted_peer};
+					    close($peer_connections{$deleted_peer}) if $peer_connections{$deleted_peer};
 						delete($peer_connections{$deleted_peer}) if $peer_connections{$deleted_peer};
 						$self->peers([grep {$deleted_peer ne $_ } @{$self->peers()}]);
 					}   
@@ -245,10 +259,14 @@ package PeerNode{
 			##
 			# 3. Reset bit vectors.
 			##
+			$ready = q//;
 			vec($ready, fileno($admin_socket), 1) = 1;
 			vec($ready, fileno($peer_listener_socket), 1) = 1; 
 			for my $peer_listener_connection (@peer_listener_connections){
                 vec($ready, fileno($peer_listener_connection), 1) = 1 if $peer_listener_connection;
+            }
+            for my $peer (keys %peer_connections){
+                vec($ready, fileno($peer_connections{$peer}), 1) = 1;
             }
             @admin_connections = ();
 		}
